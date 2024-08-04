@@ -21,9 +21,9 @@ struct Arguments {
 fn main() {
     let args = Arguments::parse();
     let host_and_port = format!("{}:{}", args.host, args.port);
-    let http_response_code = match HttpStatusCode::from_u16(args.return_code){
-          Some(t) => t,
-          None => panic!("Invalid return code {}",args.return_code)
+    let http_response_code = match HttpStatusCode::from_u16(args.return_code) {
+        Some(t) => t,
+        None => panic!("Invalid return code {}", args.return_code),
     };
 
     let listener = match TcpListener::bind(&host_and_port) {
@@ -301,3 +301,105 @@ impl HttpStatusCode {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::panic;
+    use std::net::TcpStream;
+    use std::thread;
+    use std::time::Duration;
+    use std::io::{Write, Read};
+
+    fn spawn_test_server(host: &str, port: u16, return_code: u16) {
+        let args = Arguments {
+            host: host.to_string(),
+            port,
+            return_code,
+        };
+
+        thread::spawn(move || {
+            let host_and_port = format!("{}:{}", args.host, args.port);
+            let http_response_code = HttpStatusCode::from_u16(args.return_code).unwrap();
+            let listener = TcpListener::bind(&host_and_port).unwrap();
+
+            for stream in listener.incoming() {
+                let stream = stream.unwrap();
+                handle_connection(stream, http_response_code);
+            }
+        });
+        // Give the server a moment to start up
+        thread::sleep(Duration::from_millis(100));
+    }
+
+    #[test]
+    fn test_server_response_ok() {
+        let host = "127.0.0.1";
+        let port = 8081;
+        let return_code = 200;
+
+        spawn_test_server(host, port, return_code);
+
+        let mut stream = TcpStream::connect(format!("{}:{}", host, port)).unwrap();
+        let request = "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n";
+        stream.write_all(request.as_bytes()).unwrap();
+
+        let mut response = String::new();
+        stream.read_to_string(&mut response).unwrap();
+
+        assert!(response.contains("HTTP/1.1 200 OK"));
+    }
+
+    #[test]
+    fn test_server_response_not_found() {
+        let host = "127.0.0.1";
+        let port = 8082;
+        let return_code = 404;
+
+        spawn_test_server(host, port, return_code);
+
+        let mut stream = TcpStream::connect(format!("{}:{}", host, port)).unwrap();
+        let request = "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n";
+        stream.write_all(request.as_bytes()).unwrap();
+
+        let mut response = String::new();
+        stream.read_to_string(&mut response).unwrap();
+
+        assert!(response.contains("HTTP/1.1 404 Not Found"));
+    }
+
+    #[test]
+    fn test_server_response_with_body() {
+        let host = "127.0.0.1";
+        let port = 8083;
+        let return_code = 200;
+
+        spawn_test_server(host, port, return_code);
+
+        let mut stream = TcpStream::connect(format!("{}:{}", host, port)).unwrap();
+        let request = "POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 13\r\n\r\nHello, world!";
+        stream.write_all(request.as_bytes()).unwrap();
+
+        let mut response = String::new();
+        stream.read_to_string(&mut response).unwrap();
+
+        assert!(response.contains("HTTP/1.1 200 OK"));
+    }
+
+    #[test]
+    fn test_server_response_chunked_body() {
+        let host = "127.0.0.1";
+        let port = 8084;
+        let return_code = 200;
+
+        spawn_test_server(host, port, return_code);
+
+        let mut stream = TcpStream::connect(format!("{}:{}", host, port)).unwrap();
+        let request = "POST / HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nHello\r\n7\r\n, world!\r\n0\r\n\r\n";
+        stream.write_all(request.as_bytes()).unwrap();
+
+        let mut response = String::new();
+        stream.read_to_string(&mut response).unwrap();
+
+        assert!(response.contains("HTTP/1.1 200 OK"));
+    }
+}
