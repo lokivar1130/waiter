@@ -304,7 +304,6 @@ impl HttpStatusCode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::panic;
     use std::net::TcpStream;
     use std::thread;
     use std::time::Duration;
